@@ -1,4 +1,4 @@
-﻿using Microsoft.BaseTypes;
+using Microsoft.BaseTypes;
 using NUnit.Framework;
 using System.Numerics;
 

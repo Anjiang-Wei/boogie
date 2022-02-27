@@ -1,4 +1,4 @@
-﻿using Microsoft.Boogie.TestUtil;
+using Microsoft.Boogie.TestUtil;
 using Microsoft.Boogie;
 using Microsoft.BaseTypes;
 using NUnit.Framework;

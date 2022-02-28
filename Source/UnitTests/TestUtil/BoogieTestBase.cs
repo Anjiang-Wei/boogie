@@ -1,4 +1,4 @@
-﻿namespace Microsoft.Boogie.TestUtil
+namespace Microsoft.Boogie.TestUtil
 {
   public class BoogieTestBase
   {

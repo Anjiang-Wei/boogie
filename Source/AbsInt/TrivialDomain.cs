@@ -1,4 +1,4 @@
-﻿namespace Microsoft.Boogie.AbstractInterpretation
+namespace Microsoft.Boogie.AbstractInterpretation
 {
   class TrivialDomain : NativeLattice
   {

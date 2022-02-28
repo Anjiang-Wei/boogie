@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using SA = System.Attribute;
 using System.Collections.Generic;
 using System.Diagnostics.Contracts;

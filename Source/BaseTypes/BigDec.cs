@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics.Contracts;
 using System.Diagnostics;
 using BIM = System.Numerics.BigInteger;

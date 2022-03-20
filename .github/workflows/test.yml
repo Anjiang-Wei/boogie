@@ -3,11 +3,11 @@ name: Boogie CI
 on:
   workflow_dispatch:
   push:
+    branches: [ master, cvc5 ]
     tags:
       - 'v*'
   pull_request:
-    branches:
-      - master
+    branches: [ master, cvc5 ]
 
 env:
   SOLUTION: Source/Boogie.sln

@@ -58,14 +58,14 @@ jobs:
           dotnet pack --no-build -c ${{ matrix.configuration }} ${SOLUTION}
           # Run unit tests
           dotnet test --no-build -c ${{ matrix.configuration }} ${SOLUTION}
-          # Run lit test suite
-          lit --param ${{ matrix.lit_param }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test
+          # Run lit test suite with Z3
+          cd Test
+          echo "running Z3" 
+          echo $PWD
+          lit -v . --timeout=120 --param boogie_params='/proverOpt:SOLVER=Z3'
           # Run lit test suite with CVC5
+          echo "==================================================="
           echo "running CVC5"
           echo $PWD
-          lit --param boogie_params='/proverOpt:SOLVER=CVC5' -v --timeout=120 -D Test
-      - name: Deploy to nuget
-        # Note: if you change the build matrix, update the following
-        # line to ensure it matches only one element of the matrix.
-        if: matrix.configuration == 'Release' && matrix.lit_param == 'batch_mode=False' && startsWith(github.ref, 'refs/tags/v')
-        run: dotnet nuget push "Source/**/bin/${{ matrix.configuration }}/Boogie*.nupkg" -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json
+          lit -v . --timeout=120 --param boogie_params='/proverOpt:SOLVER=CVC5'
+

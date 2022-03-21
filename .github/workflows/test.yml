@@ -57,4 +57,4 @@ jobs:
           dotnet test --no-build -c ${{ matrix.configuration }} ${SOLUTION}
           # Run lit test suite
           echo "start running lit"
-          lit --param ${{ matrix.lit_param2 }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test
+          lit --param "batch_mode=False" ${{ matrix.lit_param2 }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test

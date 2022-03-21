@@ -18,7 +18,7 @@ jobs:
     strategy:
       matrix:
         configuration: [Debug]
-        lit_param2: ["boogie_params='/proverOpt:SOLVER=CVC5", "boogie_params='/proverOpt:SOLVER=Z3"]
+        lit_param2: ["boogie_params='/proverOpt:SOLVER=CVC5'", "boogie_params='/proverOpt:SOLVER=Z3'"]
     steps:
       - name: Setup dotnet
         uses: actions/setup-dotnet@v1
@@ -56,4 +56,5 @@ jobs:
           # Run unit tests
           dotnet test --no-build -c ${{ matrix.configuration }} ${SOLUTION}
           # Run lit test suite
+          echo "start running lit"
           lit --param ${{ matrix.lit_param2 }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test

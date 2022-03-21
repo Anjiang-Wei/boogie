@@ -15,8 +15,22 @@ namespace VC
   using Bpl = Microsoft.Boogie;
   using System.Threading.Tasks;
 
-  public class Split
-    {
+  public record VCResult
+  (
+    int vcNum,
+    DateTime startTime,
+    ProverInterface.Outcome outcome,
+    TimeSpan runTime,
+    IEnumerable<AssertCmd> asserts,
+    int resourceCount
+  );
+
+  public class Split : ProofRun
+  {
+      private VCGenOptions options;
+
+      public int? RandomSeed => Implementation.RandomSeed ?? options.RandomSeed;
+    
       class BlockStats
       {
         public bool bigBlock;
@@ -61,7 +75,7 @@ namespace VC
         Contract.Invariant(cce.NonNullElements(assumizedBranches));
         Contract.Invariant(gotoCmdOrigins != null);
         Contract.Invariant(parent != null);
-        Contract.Invariant(impl != null);
+        Contract.Invariant(Implementation != null);
         Contract.Invariant(copies != null);
         Contract.Invariant(cce.NonNull(protectedFromAssertToAssume));
         Contract.Invariant(cce.NonNull(keepAtAll));
@@ -69,6 +83,7 @@ namespace VC
 
 
       private readonly List<Block> blocks;
+      public IEnumerable<AssertCmd> Asserts => blocks.SelectMany(block => block.cmds.OfType<AssertCmd>());
       public readonly IReadOnlyList<Declaration> TopLevelDeclarations;
       readonly List<Block> bigBlocks = new();
 
@@ -94,8 +109,7 @@ namespace VC
       readonly public VCGen /*!*/
         parent;
 
-      Implementation /*!*/
-        impl;
+      public Implementation /*!*/ Implementation { get; private set; }
 
       Dictionary<Block /*!*/, Block /*!*/> /*!*/
         copies = new Dictionary<Block /*!*/, Block /*!*/>();
@@ -113,38 +127,41 @@ namespace VC
 
       // async interface
       private Checker checker;
-      private int splitNum;
+      private int splitIndex;
       internal VCGen.ErrorReporter reporter;
 
-      public Split(List<Block /*!*/> /*!*/ blocks, Dictionary<TransferCmd, ReturnCmd> /*!*/ gotoCmdOrigins,
-        VCGen /*!*/ par, Implementation /*!*/ impl)
+      public Split(VCGenOptions options, List<Block /*!*/> /*!*/ blocks,
+        Dictionary<TransferCmd, ReturnCmd> /*!*/ gotoCmdOrigins,
+        VCGen /*!*/ par, Implementation /*!*/ implementation)
       {
         Contract.Requires(cce.NonNullElements(blocks));
         Contract.Requires(gotoCmdOrigins != null);
         Contract.Requires(par != null);
-        Contract.Requires(impl != null);
+        Contract.Requires(implementation != null);
         this.blocks = blocks;
         this.gotoCmdOrigins = gotoCmdOrigins;
         this.parent = par;
-        this.impl = impl;
+        this.Implementation = implementation;
+        this.options = options;
         Interlocked.Increment(ref currentId);
 
-        PrintTopLevelDeclarationsForPruning(impl, "before");        
-        TopLevelDeclarations = Prune.GetLiveDeclarations(par.program, blocks).ToList();
-        PrintTopLevelDeclarationsForPruning(impl, "after");
+        TopLevelDeclarations = par.program.TopLevelDeclarations;
+        PrintTopLevelDeclarationsForPruning(par.program, implementation, "before");        
+        TopLevelDeclarations = Prune.GetLiveDeclarations(options, par.program, blocks).ToList();
+        PrintTopLevelDeclarationsForPruning(par.program, implementation, "after");
       }
 
-      private void PrintTopLevelDeclarationsForPruning(Implementation implementation, string suffix)
+      private void PrintTopLevelDeclarationsForPruning(Program program, Implementation implementation, string suffix)
       {
-        if (!CommandLineOptions.Clo.Prune || CommandLineOptions.Clo.PrintPrunedFile == null)
+        if (!options.Prune || options.PrintPrunedFile == null)
         {
           return;
         }
 
         using var writer = new TokenTextWriter(
-          $"{CommandLineOptions.Clo.PrintPrunedFile}-{suffix}-{Util.EscapeFilename(implementation.Name)}", false,
-          CommandLineOptions.Clo.PrettyPrint);
-        foreach (var declaration in TopLevelDeclarations) {
+          $"{options.PrintPrunedFile}-{suffix}-{Util.EscapeFilename(implementation.Name)}", false,
+          options.PrettyPrint, options);
+        foreach (var declaration in TopLevelDeclarations ?? program.TopLevelDeclarations) {
           declaration.Emit(writer, 0);
         }
 
@@ -180,7 +197,7 @@ namespace VC
 
       public void DumpDot(int splitNum)
       {
-        using (System.IO.StreamWriter sw = System.IO.File.CreateText($"{impl.Name}.split.{splitNum}.dot"))
+        using (System.IO.StreamWriter sw = System.IO.File.CreateText($"{Implementation.Name}.split.{splitNum}.dot"))
         {
           sw.WriteLine("digraph G {");
 
@@ -211,20 +228,20 @@ namespace VC
           sw.Close();
         }
 
-        string filename = string.Format("{0}.split.{1}.bpl", impl.Name, splitNum);
+        string filename = string.Format("{0}.split.{1}.bpl", Implementation.Name, splitNum);
         using (System.IO.StreamWriter sw = System.IO.File.CreateText(filename))
         {
-          int oldPrintUnstructured = CommandLineOptions.Clo.PrintUnstructured;
-          CommandLineOptions.Clo.PrintUnstructured = 2; // print only the unstructured program
-          bool oldPrintDesugaringSetting = CommandLineOptions.Clo.PrintDesugarings;
-          CommandLineOptions.Clo.PrintDesugarings = false;
-          List<Block> backup = impl.Blocks;
+          int oldPrintUnstructured = options.PrintUnstructured;
+          options.PrintUnstructured = 2; // print only the unstructured program
+          bool oldPrintDesugaringSetting = options.PrintDesugarings;
+          options.PrintDesugarings = false;
+          List<Block> backup = Implementation.Blocks;
           Contract.Assert(backup != null);
-          impl.Blocks = blocks;
-          impl.Emit(new TokenTextWriter(filename, sw, /*setTokens=*/ false, /*pretty=*/ false), 0);
-          impl.Blocks = backup;
-          CommandLineOptions.Clo.PrintDesugarings = oldPrintDesugaringSetting;
-          CommandLineOptions.Clo.PrintUnstructured = oldPrintUnstructured;
+          Implementation.Blocks = blocks;
+          Implementation.Emit(new TokenTextWriter(filename, sw, /*setTokens=*/ false, /*pretty=*/ false, options), 0);
+          Implementation.Blocks = backup;
+          options.PrintDesugarings = oldPrintDesugaringSetting;
+          options.PrintUnstructured = oldPrintUnstructured;
         }
       }
 
@@ -430,7 +447,7 @@ namespace VC
           }
         }
 
-        if (CommandLineOptions.Clo.VcsPathSplitMult * score > totalCost)
+        if (options.VcsPathSplitMult * score > totalCost)
         {
           splitBlock = null;
           score = -1;
@@ -469,7 +486,7 @@ namespace VC
 
           if (count > 1)
           {
-            s.incomingPaths *= CommandLineOptions.Clo.VcsPathJoinMult;
+            s.incomingPaths *= options.VcsPathJoinMult;
           }
         }
       }
@@ -581,14 +598,14 @@ namespace VC
             double local = s.assertionCost;
             if (ShouldAssumize(b))
             {
-              local = (s.assertionCost + s.assumptionCost) * CommandLineOptions.Clo.VcsAssumeMult;
+              local = (s.assertionCost + s.assumptionCost) * options.VcsAssumeMult;
             }
             else
             {
-              local = s.assumptionCost * CommandLineOptions.Clo.VcsAssumeMult + s.assertionCost;
+              local = s.assumptionCost * options.VcsAssumeMult + s.assertionCost;
             }
 
-            local = local + local * s.incomingPaths * CommandLineOptions.Clo.VcsPathCostMult;
+            local = local + local * s.incomingPaths * options.VcsPathCostMult;
             cost += local;
           }
         }
@@ -636,7 +653,7 @@ namespace VC
 
             if (swap)
             {
-              theNewCmd = VCGen.AssertTurnedIntoAssume(a);
+              theNewCmd = VCGen.AssertTurnedIntoAssume(options, a);
             }
           }
 
@@ -713,7 +730,7 @@ namespace VC
           }
         }
 
-        return new Split(newBlocks, newGotoCmdOrigins, parent, impl);
+        return new Split(options, newBlocks, newGotoCmdOrigins, parent, Implementation);
       }
 
       Split SplitAt(int idx)
@@ -749,11 +766,11 @@ namespace VC
 
       void Print()
       {
-        List<Block> tmp = impl.Blocks;
+        List<Block> tmp = Implementation.Blocks;
         Contract.Assert(tmp != null);
-        impl.Blocks = blocks;
-        ConditionGeneration.EmitImpl(impl, false);
-        impl.Blocks = tmp;
+        Implementation.Blocks = blocks;
+        ConditionGeneration.EmitImpl(options, Implementation, false);
+        Implementation.Blocks = tmp;
       }
 
       public Counterexample ToCounterexample(ProverContext context)
@@ -776,7 +793,7 @@ namespace VC
             Contract.Assert(c != null);
             if (c is AssertCmd)
             {
-              return VCGen.AssertCmdToCounterexample((AssertCmd) c, cce.NonNull(b.TransferCmd), trace, null, null, null, context);
+              return VCGen.AssertCmdToCounterexample(options, (AssertCmd) c, cce.NonNull(b.TransferCmd), trace, null, null, null, context, this);
             }
           }
         }
@@ -826,7 +843,7 @@ namespace VC
         }
         return blockAssignments;
       }
-      private static List<Block> DoPreAssignedManualSplit(List<Block> blocks, Dictionary<Block, Block> blockAssignments, int splitNumberWithinBlock,
+      private static List<Block> DoPreAssignedManualSplit(VCGenOptions options, List<Block> blocks, Dictionary<Block, Block> blockAssignments, int splitNumberWithinBlock,
         Block containingBlock, bool lastSplitInBlock, bool splitOnEveryAssert)
       {
         var newBlocks = new List<Block>(blocks.Count()); // Copies of the original blocks
@@ -849,7 +866,7 @@ namespace VC
                 splitCount++;
                 verify = splitCount == splitNumberWithinBlock;
               }
-              newCmds.Add(verify ? c : Split.AssertIntoAssume(c));
+              newCmds.Add(verify ? c : AssertIntoAssume(options, c));
             }
             newBlock.Cmds = newCmds;
           }
@@ -858,14 +875,14 @@ namespace VC
             var verify = true;
             var newCmds = new List<Cmd>();
             foreach(Cmd c in currentBlock.Cmds) {
-              verify = ShouldSplitHere(c, splitOnEveryAssert) ? false : verify;
-              newCmds.Add(verify ? c : Split.AssertIntoAssume(c));
+              verify = !ShouldSplitHere(c, splitOnEveryAssert) && verify;
+              newCmds.Add(verify ? c : AssertIntoAssume(options, c));
             }
             newBlock.Cmds = newCmds;
           }
           else
           {
-            newBlock.Cmds = currentBlock.Cmds.Select<Cmd, Cmd>(c => Split.AssertIntoAssume(c)).ToList();
+            newBlock.Cmds = currentBlock.Cmds.Select<Cmd, Cmd>(x => AssertIntoAssume(options, x)).ToList();
           }
         }
         // Patch the edges between the new blocks
@@ -947,13 +964,13 @@ namespace VC
                || c is AssertCmd && splitOnEveryAssert;
       }
       
-      public static List<Split /*!*/> FindManualSplits(Split s, bool splitOnEveryAssert)
+      public static List<Split /*!*/> FindManualSplits(Split initialSplit, bool splitOnEveryAssert)
       {
-        Contract.Requires(s.impl != null);
+        Contract.Requires(initialSplit.Implementation != null);
         Contract.Ensures(Contract.Result<List<Split>>() == null || cce.NonNullElements(Contract.Result<List<Split>>()));
 
         var splitPoints = new Dictionary<Block, int>();
-        foreach (var b in s.blocks)
+        foreach (var b in initialSplit.blocks)
         {
           foreach (Cmd c in b.Cmds)
           {
@@ -965,39 +982,39 @@ namespace VC
             }
           }
         }
-        List<Split> splits = new List<Split>();
-        if (splitPoints.Count() == 0)
+        var splits = new List<Split>();
+        if (!splitPoints.Any())
         {
-          splits.Add(s);
+          splits.Add(initialSplit);
         }
         else
         {
-          Block entryPoint = s.blocks[0];
-          var blockAssignments = PickBlocksToVerify(s.blocks, splitPoints);
+          Block entryPoint = initialSplit.blocks[0];
+          var blockAssignments = PickBlocksToVerify(initialSplit.blocks, splitPoints);
           var entryBlockHasSplit = splitPoints.Keys.Contains(entryPoint);
-          var baseSplitBlocks = PostProcess(DoPreAssignedManualSplit(s.blocks, blockAssignments, -1, entryPoint, !entryBlockHasSplit, splitOnEveryAssert));
-          splits.Add(new Split(baseSplitBlocks, s.gotoCmdOrigins, s.parent, s.impl));
+          var baseSplitBlocks = PostProcess(DoPreAssignedManualSplit(initialSplit.options, initialSplit.blocks, blockAssignments, -1, entryPoint, !entryBlockHasSplit, splitOnEveryAssert));
+          splits.Add(new Split(initialSplit.options, baseSplitBlocks, initialSplit.gotoCmdOrigins, initialSplit.parent, initialSplit.Implementation));
           foreach (KeyValuePair<Block, int> pair in splitPoints)
           {
             for (int i = 0; i < pair.Value; i++)
             {
               bool lastSplitInBlock = i == pair.Value - 1;
-              var newBlocks = DoPreAssignedManualSplit(s.blocks, blockAssignments, i, pair.Key, lastSplitInBlock, splitOnEveryAssert);
-              splits.Add(new Split(PostProcess(newBlocks), s.gotoCmdOrigins, s.parent, s.impl)); // REVIEW: Does gotoCmdOrigins need to be changed at all?
+              var newBlocks = DoPreAssignedManualSplit(initialSplit.options, initialSplit.blocks, blockAssignments, i, pair.Key, lastSplitInBlock, splitOnEveryAssert);
+              splits.Add(new Split(initialSplit.options, PostProcess(newBlocks), initialSplit.gotoCmdOrigins, initialSplit.parent, initialSplit.Implementation)); // REVIEW: Does gotoCmdOrigins need to be changed at all?
             }
           }
         }
         return splits;
       }
 
-      public static List<Split> FocusImpl(Implementation impl, Dictionary<TransferCmd, ReturnCmd> gotoCmdOrigins, VCGen par)
+      public static List<Split> FocusImpl(VCGenOptions options, Implementation impl, Dictionary<TransferCmd, ReturnCmd> gotoCmdOrigins, VCGen par)
       {
         bool IsFocusCmd(Cmd c) {
           return c is PredicateCmd p && QKeyValue.FindBoolAttribute(p.Attributes, "focus");
         }
 
         List<Block> GetFocusBlocks(List<Block> blocks) {
-          return blocks.Where(blk => blk.Cmds.Where(c => IsFocusCmd(c)).Any()).ToList();
+          return blocks.Where(blk => blk.Cmds.Any(c => IsFocusCmd(c))).ToList();
         }
 
         var dag = Program.GraphFromImpl(impl);
@@ -1005,12 +1022,12 @@ namespace VC
         // By default, we process the foci in a top-down fashion, i.e., in the topological order.
         // If the user sets the RelaxFocus flag, we use the reverse (topological) order.
         var focusBlocks = GetFocusBlocks(topoSorted);
-        if (CommandLineOptions.Clo.RelaxFocus) {
+        if (par.CheckerPool.Options.RelaxFocus) {
           focusBlocks.Reverse();
         }
         if (!focusBlocks.Any()) {
           var f = new List<Split>();
-          f.Add(new Split(impl.Blocks, gotoCmdOrigins, par, impl));
+          f.Add(new Split(options, impl.Blocks, gotoCmdOrigins, par, impl));
           return f;
         }
         // finds all the blocks dominated by focusBlock in the subgraph
@@ -1074,7 +1091,7 @@ namespace VC
               // Their assertions turn into assumes and any splits inside them are disabled.
               if(freeBlocks.Contains(b))
               {
-                newBlock.Cmds = b.Cmds.Select(c => Split.AssertIntoAssume(c)).Select(c => DisableSplits(c)).ToList();
+                newBlock.Cmds = b.Cmds.Select(c => Split.AssertIntoAssume(options, c)).Select(c => DisableSplits(c)).ToList();
               }
               if (b.TransferCmd is GotoCmd gtc)
               {
@@ -1086,7 +1103,7 @@ namespace VC
             }
             newBlocks.Reverse();
             Contract.Assert(newBlocks[0] == oldToNewBlockMap[impl.Blocks[0]]);
-            s.Add(new Split(PostProcess(newBlocks), gotoCmdOrigins, par, impl));
+            s.Add(new Split(options, PostProcess(newBlocks), gotoCmdOrigins, par, impl));
           }
           else if (!blocks.Contains(focusBlocks[focusIdx])
                     || freeBlocks.Contains(focusBlocks[focusIdx]))
@@ -1111,9 +1128,9 @@ namespace VC
         return s;
       }
 
-      public static List<Split> FocusAndSplit(Implementation impl, Dictionary<TransferCmd, ReturnCmd> gotoCmdOrigins, VCGen par, bool splitOnEveryAssert)
+      public static List<Split> FocusAndSplit(VCGenOptions options, Implementation impl, Dictionary<TransferCmd, ReturnCmd> gotoCmdOrigins, VCGen par, bool splitOnEveryAssert)
       {
-        List<Split> focussedImpl = FocusImpl(impl, gotoCmdOrigins, par);
+        List<Split> focussedImpl = FocusImpl(options, impl, gotoCmdOrigins, par);
         var splits = focussedImpl.Select(s => FindManualSplits(s, splitOnEveryAssert)).SelectMany(x => x).ToList();
         return splits;
       }
@@ -1148,7 +1165,7 @@ namespace VC
 
           Split s0, s1;
 
-          bool splitStats = CommandLineOptions.Clo.TraceVerify;
+          bool splitStats = initial.options.TraceVerify;
 
           if (splitStats)
           {
@@ -1221,7 +1238,7 @@ namespace VC
             Console.WriteLine("    --> {0}", s1.Stats);
           }
 
-          if (CommandLineOptions.Clo.TraceVerify)
+          if (initial.options.TraceVerify)
           {
             best.Print();
           }
@@ -1276,25 +1293,25 @@ namespace VC
         }
       }
 
-      public void ReadOutcome(ref ConditionGeneration.Outcome curOutcome, out bool proverFailed)
+      public void ReadOutcome(VerifierCallback callback, ref ConditionGeneration.Outcome curOutcome, out bool proverFailed, ref int totalResourceCount)
       {
         Contract.EnsuresOnThrow<UnexpectedProverOutputException>(true);
         ProverInterface.Outcome outcome = cce.NonNull(checker).ReadOutcome();
 
-        if (CommandLineOptions.Clo.Trace && splitNum >= 0)
+        if (options.Trace && splitIndex >= 0)
         {
-          System.Console.WriteLine("      --> split #{0} done,  [{1} s] {2}", splitNum + 1,
+          System.Console.WriteLine("      --> split #{0} done,  [{1} s] {2}", splitIndex + 1,
             checker.ProverRunTime.TotalSeconds, outcome);
         }
 
-        if (CommandLineOptions.Clo.XmlSink != null && splitNum >= 0) {
-          CommandLineOptions.Clo.XmlSink.WriteEndSplit(outcome.ToString().ToLowerInvariant(), 
-            TimeSpan.FromSeconds(checker.ProverRunTime.TotalSeconds));
-        }
+        var resourceCount = checker.GetProverResourceCount().Result;
+        totalResourceCount += resourceCount;
+        var result = new VCResult(splitIndex + 1, checker.ProverStart, outcome, checker.ProverRunTime, Asserts, resourceCount);
+        callback.OnVCResult(result);
 
-        if (CommandLineOptions.Clo.VcsDumpSplits)
+        if (options.VcsDumpSplits)
         {
-          DumpDot(splitNum);
+          DumpDot(splitIndex);
         }
 
         proverFailed = false;
@@ -1346,16 +1363,18 @@ namespace VC
       /// <summary>
       /// As a side effect, updates "this.parent.CumulativeAssertionCount".
       /// </summary>
-      public void BeginCheck(Checker checker, VerifierCallback callback, ModelViewInfo mvInfo, int no, uint timeout, uint rlimit)
+      public async Task BeginCheck(TextWriter traceWriter, Checker checker, VerifierCallback callback, ModelViewInfo mvInfo, int splitIndex, uint timeout,
+        uint rlimit, CancellationToken cancellationToken)
       {
         Contract.Requires(checker != null);
         Contract.Requires(callback != null);
 
-        splitNum = no;
+        this.splitIndex = splitIndex;
 
+        VCExpr vc;
         // Lock impl since we're setting impl.Blocks that is used to generate the VC.
-        lock (impl) {
-          impl.Blocks = blocks;
+        lock (Implementation) {
+          Implementation.Blocks = blocks;
 
           this.checker = checker;
 
@@ -1363,44 +1382,51 @@ namespace VC
 
           ProverContext ctx = checker.TheoremProver.Context;
           Boogie2VCExprTranslator bet = ctx.BoogieExprTranslator;
-          var cc = new VCGen.CodeExprConversionClosure(absyIds, ctx);
+          var cc = new VCGen.CodeExprConversionClosure(traceWriter, checker.Pool.Options, absyIds, ctx);
           bet.SetCodeExprConverter(cc.CodeExprToVerificationCondition);
 
           var exprGen = ctx.ExprGen;
           VCExpr controlFlowVariableExpr = exprGen.Integer(BigNum.ZERO);
-          VCExpr vc = parent.GenerateVCAux(impl, controlFlowVariableExpr, absyIds, checker.TheoremProver.Context);
+          vc = parent.GenerateVCAux(Implementation, controlFlowVariableExpr, absyIds, checker.TheoremProver.Context);
           Contract.Assert(vc != null);
 
-          vc = QuantifierInstantiationEngine.Instantiate(impl, exprGen, bet, vc);
+          vc = QuantifierInstantiationEngine.Instantiate(Implementation, exprGen, bet, vc);
 
           VCExpr controlFlowFunctionAppl =
             exprGen.ControlFlowFunctionApplication(exprGen.Integer(BigNum.ZERO), exprGen.Integer(BigNum.ZERO));
-          VCExpr eqExpr = exprGen.Eq(controlFlowFunctionAppl, exprGen.Integer(BigNum.FromInt(absyIds.GetId(impl.Blocks[0]))));
+          VCExpr eqExpr = exprGen.Eq(controlFlowFunctionAppl, exprGen.Integer(BigNum.FromInt(absyIds.GetId(Implementation.Blocks[0]))));
           vc = exprGen.Implies(eqExpr, vc);
-          reporter = new VCGen.ErrorReporter(gotoCmdOrigins, absyIds, impl.Blocks, parent.debugInfos, callback,
-            mvInfo, this.Checker.TheoremProver.Context, parent.program);
-          
-          if (CommandLineOptions.Clo.TraceVerify && no >= 0)
-          {
-            Console.WriteLine("-- after split #{0}", no);
-            Print();
+          reporter = new VCGen.ErrorReporter(options, gotoCmdOrigins, absyIds, Implementation.Blocks, parent.debugInfos, callback,
+            mvInfo, Checker.TheoremProver.Context, parent.program, this);
+        }
+
+        if (options.TraceVerify && splitIndex >= 0)
+        {
+          Console.WriteLine("-- after split #{0}", splitIndex);
+          Print();
+        }
+
+        await checker.BeginCheck(Description, vc, reporter, timeout, rlimit, cancellationToken);
+      }
+
+      public string Description
+      {
+        get
+        {
+          string description = cce.NonNull(Implementation.Name);
+          if (splitIndex >= 0) {
+            description += "_split" + splitIndex;
           }
 
-          string desc = cce.NonNull(impl.Name);
-          if (no >= 0)
-          {
-            desc += "_split" + no;
-          }
-
-          checker.BeginCheck(desc, vc, reporter, timeout, rlimit, impl.RandomSeed);
+          return description;
         }
       }
 
-      private static Cmd AssertIntoAssume(Cmd c)
+      private static Cmd AssertIntoAssume(VCGenOptions options, Cmd c)
       {
         if (c is AssertCmd assrt)
         {
-          return VCGen.AssertTurnedIntoAssume(assrt);
+          return VCGen.AssertTurnedIntoAssume(options, assrt);
         }
 
         return c;
@@ -1475,9 +1501,8 @@ namespace VC
         }
       }
 
-      public void ReleaseChecker()
+      public void ResetChecker()
       {
-        Checker.GoBackToIdle();
         checker = null;
       }
     }

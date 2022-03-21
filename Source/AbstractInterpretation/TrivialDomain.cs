@@ -11,7 +11,7 @@ namespace Microsoft.Boogie.AbstractInterpretation
         IsTop = isTop;
       }
 
-      public override Expr ToExpr()
+      public override Expr ToExpr(CoreOptions options)
       {
         return Expr.Literal(IsTop);
       }

@@ -1,16 +1,14 @@
+using System.Threading.Tasks;
 using Microsoft.Boogie;
 using NUnit.Framework;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 
 namespace ExecutionEngineTests
 {
   [TestFixture]
-  public class ProofIsolation
+  public class SolverLogStabilityTest
   {
     [Test()]
-    public void OrderIsNormalisedBasedOnContent()
+    public async Task OrderIsNormalisedBasedOnContent()
     {
       var procedure1 = @"
 type Person;
@@ -44,26 +42,21 @@ procedure M(p: Person)
 {
 }";
 
-      CommandLineOptions.Install(new CommandLineOptions());
-      CommandLineOptions.Clo.Parse(new string[] { });
-      CommandLineOptions.Clo.NormalizeNames = true;
-      CommandLineOptions.Clo.EmitDebugInformation = false;
-      ExecutionEngine.printer = new ConsolePrinter();
+      var options = CommandLineOptions.FromArguments();
+      options.NormalizeNames = true;
+      options.EmitDebugInformation = false;
       
-      var proverLog1 = GetProverLogForProgram(procedure1);
-      var proverLog2 = GetProverLogForProgram(procedure2);
+      var proverLog1 = await GetProverLogs.GetProverLogForProgram(options, procedure1);
+      var proverLog2 = await GetProverLogs.GetProverLogForProgram(options, procedure2);
       Assert.AreEqual(proverLog1, proverLog2);
       
-      CommandLineOptions.Clo.NormalizeDeclarationOrder = false;
-      var proverLog3 = GetProverLogForProgram(procedure2);
+      options.NormalizeDeclarationOrder = false;
+      var proverLog3 = await GetProverLogs.GetProverLogForProgram(options, procedure2);
       Assert.AreNotEqual(proverLog1, proverLog3);
-      
-      // Set this option back to its default
-      CommandLineOptions.Clo.NormalizeDeclarationOrder = true;
     }
     
     [Test()]
-    public void TurnOffEmitDebugInformation()
+    public async Task TurnOffEmitDebugInformation()
     {
       var procedure = @"
 procedure M(x: int) 
@@ -72,28 +65,23 @@ procedure M(x: int)
   assert (forall y:int :: x + y + x - y == 4);
 }";
       
-      CommandLineOptions.Install(new CommandLineOptions());
-      CommandLineOptions.Clo.Parse(new string[]{});
-      ExecutionEngine.printer = new ConsolePrinter();
+      var options = CommandLineOptions.FromArguments();
       
-      var proverLog1 = GetProverLogForProgram(procedure);
+      var proverLog1 = await GetProverLogs.GetProverLogForProgram(options, procedure);
       Assert.True(proverLog1.Contains("skolemid"));
       Assert.True(proverLog1.Contains("qid"));
       Assert.True(proverLog1.Contains(":boogie-vc-id"));
       
-      CommandLineOptions.Install(new CommandLineOptions());
-      CommandLineOptions.Clo.Parse(new string[]{});
-      CommandLineOptions.Clo.EmitDebugInformation = false;
-      ExecutionEngine.printer = new ConsolePrinter();
+      options.EmitDebugInformation = false;
       
-      var proverLog2 = GetProverLogForProgram(procedure);
+      var proverLog2 = await GetProverLogs.GetProverLogForProgram(options, procedure);
       Assert.True(!proverLog2.Contains("skolemid"));
       Assert.True(!proverLog2.Contains("qid"));
       Assert.True(!proverLog2.Contains(":boogie-vc-id"));
     }
 
     [Test()]
-    public void TestNameDiscarding()
+    public async Task TestNameDiscarding()
     {
       var procedure1 = @"
 type Wicket;
@@ -159,18 +147,16 @@ procedure M(x2: int, coloredBarrel: Barrel2 RGBColor2)
 }
 ";
       
-      CommandLineOptions.Install(new CommandLineOptions());
-      CommandLineOptions.Clo.Parse(new string[]{});
-      CommandLineOptions.Clo.NormalizeNames = true;
-      ExecutionEngine.printer = new ConsolePrinter();
+      var options = CommandLineOptions.FromArguments();
+      options.NormalizeNames = true;
       
-      var proverLog1 = GetProverLogForProgram(procedure1);
-      var proverLog2 = GetProverLogForProgram(procedure2);
+      var proverLog1 = await GetProverLogs.GetProverLogForProgram(options, procedure1);
+      var proverLog2 = await GetProverLogs.GetProverLogForProgram(options, procedure2);
       Assert.AreEqual(proverLog1, proverLog2);
     }
 
     [Test()]
-    public void ControlFlowIsIsolated()
+    public async Task ControlFlowIsIsolated()
     {
       var procedure1 = @"
 procedure M(x: int) 
@@ -191,20 +177,18 @@ procedure N(x: int)
       var procedure2And1 = $@"
 {procedure1}
 {procedure2}";
-      CommandLineOptions.Install(new CommandLineOptions());
-      CommandLineOptions.Clo.Parse(new string[]{});
-      ExecutionEngine.printer = new ConsolePrinter();
+      var options = CommandLineOptions.FromArguments();
       
-      var proverLog1 = GetProverLogForProgram(procedure1);
-      CommandLineOptions.Clo.ProcsToCheck.Add("M");
-      var proverLog2 = GetProverLogForProgram(procedure1And2);
+      var proverLog1 = await GetProverLogs.GetProverLogForProgram(options, procedure1);
+      options.ProcsToCheck.Add("M");
+      var proverLog2 = await GetProverLogs.GetProverLogForProgram(options, procedure1And2);
       Assert.AreEqual(proverLog1, proverLog2);
-      var proverLog3 = GetProverLogForProgram(procedure2And1);
+      var proverLog3 = await GetProverLogs.GetProverLogForProgram(options, procedure2And1);
       Assert.AreEqual(proverLog3, proverLog2);
     }
     
     [Test()]
-    public void ConstantsFunctionsAxiomsAndTypesAreIsolated()
+    public async Task ConstantsFunctionsAxiomsAndTypesAreIsolated()
     {
       var procedure1 = @"
 type Wicket;
@@ -277,43 +261,15 @@ procedure M2(x: int, coloredBarrel: Barrel2 RGBColor2)
       var procedure2And1 = $@"
 {procedure1}
 {procedure2}";
-      CommandLineOptions.Install(new CommandLineOptions());
-      CommandLineOptions.Clo.Prune = true;
-      CommandLineOptions.Clo.Parse(new string[]{});
-      ExecutionEngine.printer = new ConsolePrinter();
+      var options = CommandLineOptions.FromArguments();
+      options.Prune = true;
       
-      var proverLog1 = GetProverLogForProgram(procedure1);
-      CommandLineOptions.Clo.ProcsToCheck.Add("M");
-      var proverLog2 = GetProverLogForProgram(procedure1And2);
+      var proverLog1 = await GetProverLogs.GetProverLogForProgram(options, procedure1);
+      options.ProcsToCheck.Add("M");
+      var proverLog2 = await GetProverLogs.GetProverLogForProgram(options, procedure1And2);
       Assert.AreEqual(proverLog1, proverLog2);
-      var proverLog3 = GetProverLogForProgram(procedure2And1);
+      var proverLog3 = await GetProverLogs.GetProverLogForProgram(options, procedure2And1);
       Assert.AreEqual(proverLog3, proverLog2);
-    }
-
-    private static string GetProverLogForProgram(string procedure)
-    {
-      var logs = GetProverLogsForProgram(procedure).ToList();
-      Assert.AreEqual(1, logs.Count);
-      return logs[0];
-    }
-    
-    private static IEnumerable<string> GetProverLogsForProgram(string procedure1)
-    {
-      var defines = new List<string>() { "FILE_0" };
-
-      // Parse error are printed to StdOut :/
-      int errorCount = Parser.Parse(new StringReader(procedure1), "1", defines, out Program program1,
-        CommandLineOptions.Clo.UseBaseNameForFileName);
-      Assert.AreEqual(0, errorCount);
-      string directory = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-      Directory.CreateDirectory(directory);
-      var temp1 = directory + "/proverLog";
-      CommandLineOptions.Clo.ProverLogFilePath = temp1;
-      CommandLineOptions.Clo.ProverOptions.Add("SOLVER=noop");
-      var success1 = ExecutionEngine.ProcessProgram(program1, "1");
-      foreach (var proverFile in Directory.GetFiles(directory)) {
-        yield return File.ReadAllText(proverFile);
-      }
     }
   }  
 }

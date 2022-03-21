@@ -7,11 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Runtime.Caching" Version="4.5.0" />
+    <PackageReference Include="System.Runtime.Caching" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AbsInt\AbsInt.csproj" />
+    <ProjectReference Include="..\AbstractInterpretation\AbstractInterpretation.csproj" />
     <ProjectReference Include="..\BaseTypes\BaseTypes.csproj" />
     <ProjectReference Include="..\CodeContractsExtender\CodeContractsExtender.csproj" />
     <ProjectReference Include="..\Concurrency\Concurrency.csproj" />

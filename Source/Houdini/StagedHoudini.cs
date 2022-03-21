@@ -2,14 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
+using System.IO;
 using System.Threading.Tasks;
 using System.Threading;
 using Microsoft.Boogie.GraphUtil;
 
 namespace Microsoft.Boogie.Houdini
 {
-  public class StagedHoudini
-  {
+  public class StagedHoudini {
+    private TextWriter traceWriter;
+    private readonly HoudiniOptions options;
     private Program program;
     private HoudiniSession.HoudiniStatistics houdiniStats;
     private Func<string, Program> ProgramFromFile;
@@ -20,28 +22,31 @@ namespace Microsoft.Boogie.Houdini
 
     private const string tempFilename = "__stagedHoudiniTemp.bpl";
 
-    public StagedHoudini(Program program, HoudiniSession.HoudiniStatistics houdiniStats,
+    public StagedHoudini(TextWriter traceWriter, HoudiniOptions options, Program program,
+      HoudiniSession.HoudiniStatistics houdiniStats,
       Func<string, Program> ProgramFromFile)
     {
+      this.options = options;
       this.program = program;
       this.houdiniStats = houdiniStats;
       this.ProgramFromFile = ProgramFromFile;
-      this.houdiniInstances = new List<Houdini>[CommandLineOptions.Clo.StagedHoudiniThreads];
-      for (int i = 0; i < CommandLineOptions.Clo.StagedHoudiniThreads; i++)
+      this.traceWriter = traceWriter;
+      this.houdiniInstances = new List<Houdini>[options.StagedHoudiniThreads];
+      for (int i = 0; i < options.StagedHoudiniThreads; i++)
       {
         houdiniInstances[i] = new List<Houdini>();
       }
 
       BreakApartConjunctionsInAnnotations();
 
-      var annotationDependenceAnalyser = new AnnotationDependenceAnalyser(program);
+      var annotationDependenceAnalyser = new AnnotationDependenceAnalyser(options, program);
       annotationDependenceAnalyser.Analyse();
       this.plan = annotationDependenceAnalyser.ApplyStages();
-      if (CommandLineOptions.Clo.Trace)
+      if (options.Trace)
       {
         annotationDependenceAnalyser.dump();
 
-        if (CommandLineOptions.Clo.DebugStagedHoudini)
+        if (options.DebugStagedHoudini)
         {
           Console.WriteLine("Plan\n====\n");
           if (plan == null)
@@ -147,7 +152,7 @@ namespace Microsoft.Boogie.Houdini
     {
       if (NoStages())
       {
-        Houdini houdini = new Houdini(program, houdiniStats);
+        Houdini houdini = new Houdini(traceWriter, options, program, houdiniStats);
         return houdini.PerformHoudiniInference();
       }
 
@@ -229,9 +234,9 @@ namespace Microsoft.Boogie.Houdini
 
       List<Houdini> h = AcquireHoudiniInstance();
 
-      if (h.Count() == 0)
+      if (!h.Any())
       {
-        h.Add(new Houdini(ProgramFromFile(tempFilename), new HoudiniSession.HoudiniStatistics(),
+        h.Add(new Houdini(traceWriter, options, ProgramFromFile(tempFilename), new HoudiniSession.HoudiniStatistics(),
           "houdiniCexTrace_" + s.GetId() + ".txt"));
       }
 
@@ -294,11 +299,11 @@ namespace Microsoft.Boogie.Houdini
 
     private void EmitProgram(string filename)
     {
-      using TokenTextWriter writer = new TokenTextWriter(filename, true);
-      int oldPrintUnstructured = CommandLineOptions.Clo.PrintUnstructured;
-      CommandLineOptions.Clo.PrintUnstructured = 2;
+      using TokenTextWriter writer = new TokenTextWriter(filename, true, options);
+      int oldPrintUnstructured = options.PrintUnstructured;
+      options.PrintUnstructured = 2;
       program.Emit(writer);
-      CommandLineOptions.Clo.PrintUnstructured = oldPrintUnstructured;
+      options.PrintUnstructured = oldPrintUnstructured;
     }
 
 

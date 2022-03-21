@@ -21,7 +21,7 @@ jobs:
     strategy:
       matrix:
         configuration: [Debug, Release]
-        lit_param: ["batch_mode=True", "batch_mode=False"]
+        lit_param2: ["boogie_params='/proverOpt:SOLVER=CVC5", "boogie_params='/proverOpt:SOLVER=Z3"]
     steps:
       - name: Setup dotnet
         uses: actions/setup-dotnet@v1
@@ -58,14 +58,5 @@ jobs:
           dotnet pack --no-build -c ${{ matrix.configuration }} ${SOLUTION}
           # Run unit tests
           dotnet test --no-build -c ${{ matrix.configuration }} ${SOLUTION}
-          # Run lit test suite with Z3
-          cd Test
-          echo "running Z3" 
-          echo $PWD
-          lit -v . --timeout=120 --param boogie_params='/proverOpt:SOLVER=Z3'
-          # Run lit test suite with CVC5
-          echo "==================================================="
-          echo "running CVC5"
-          echo $PWD
-          lit -v . --timeout=120 --param boogie_params='/proverOpt:SOLVER=CVC5'
-
+          # Run lit test suite
+          lit --param ${{ matrix.lit_param2 }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test

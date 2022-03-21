@@ -17,8 +17,7 @@ jobs:
     runs-on: ubuntu-18.04
     strategy:
       matrix:
-        configuration: [Debug, Release]
-        lit_param: ["batch_mode=True", "batch_mode=False"]
+        configuration: [Debug]
         lit_param2: ["boogie_params='/proverOpt:SOLVER=CVC5", "boogie_params='/proverOpt:SOLVER=Z3"]
     steps:
       - name: Setup dotnet
@@ -57,9 +56,4 @@ jobs:
           # Run unit tests
           dotnet test --no-build -c ${{ matrix.configuration }} ${SOLUTION}
           # Run lit test suite
-          lit --param ${{ matrix.lit_param }} ${{ matrix.lit_param2 }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test
-      - name: Deploy to nuget
-        # Note: if you change the build matrix, update the following
-        # line to ensure it matches only one element of the matrix.
-        if: matrix.configuration == 'Release' && matrix.lit_param == 'batch_mode=False' && startsWith(github.ref, 'refs/tags/v')
-        run: dotnet nuget push "Source/**/bin/${{ matrix.configuration }}/Boogie*.nupkg" -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json
+          lit --param ${{ matrix.lit_param2 }} -v --timeout=120 -D configuration=${{ matrix.configuration }} Test

@@ -1,0 +1,6 @@
+./civl/log.smt2:10.14: warning: Attribute ':skolemid' not supported (ignoring this and all following uses)
+(error "Parse Error: ./civl/log.smt2:22.116: Sequence terminated early by token: '=>'.
+
+  ...tid (Array T@X Int)) ) (!  (and (= ((_ map =>) (store ((as const (Arra...
+                                                ^
+")
